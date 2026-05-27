@@ -34,10 +34,12 @@ import { AnalyticsService } from "./telemetry/Services/AnalyticsService.ts";
 import { ServerAuth } from "./auth/Services/ServerAuth.ts";
 import { ProviderSessionReaper } from "./provider/Services/ProviderSessionReaper.ts";
 import {
+  formatHeadlessServeNoAuthOutput,
   formatHeadlessServeOutput,
   formatHostForUrl,
   isWildcardHost,
   issueHeadlessServeAccessInfo,
+  issueHeadlessServeConnectionString,
 } from "./startupAccess.ts";
 
 export class ServerRuntimeStartupError extends Data.TaggedError("ServerRuntimeStartupError")<{
@@ -248,6 +250,9 @@ const resolveStartupBrowserTarget = Effect.gen(function* () {
       ? `http://${formatHostForUrl(serverConfig.host)}:${serverConfig.port}`
       : localUrl;
   const baseTarget = serverConfig.devUrl?.toString() ?? bindUrl;
+  if (serverConfig.insecureNoAuth) {
+    return baseTarget;
+  }
   return yield* Effect.succeed(serverConfig.mode === "desktop" ? baseTarget : undefined).pipe(
     Effect.flatMap((target) =>
       target ? Effect.succeed(target) : serverAuth.issueStartupPairingUrl(baseTarget),
@@ -432,18 +437,30 @@ export const makeServerRuntimeStartup = Effect.gen(function* () {
       yield* launchStartupHeartbeat;
       if (serverConfig.startupPresentation === "headless") {
         yield* Effect.logDebug("startup phase: headless access info");
-        const accessInfo = yield* issueHeadlessServeAccessInfo();
-        yield* runStartupPhase(
-          "headless.output",
-          Console.log(formatHeadlessServeOutput(accessInfo)),
-        );
+        if (serverConfig.insecureNoAuth) {
+          const connectionString = yield* issueHeadlessServeConnectionString();
+          yield* runStartupPhase(
+            "headless.output",
+            Console.log(formatHeadlessServeNoAuthOutput(connectionString)),
+          );
+        } else {
+          const accessInfo = yield* issueHeadlessServeAccessInfo();
+          yield* runStartupPhase(
+            "headless.output",
+            Console.log(formatHeadlessServeOutput(accessInfo)),
+          );
+        }
       } else {
         yield* Effect.logDebug("startup phase: browser open check");
         const startupBrowserTarget = yield* resolveStartupBrowserTarget;
-        if (serverConfig.mode !== "desktop") {
+        if (serverConfig.mode !== "desktop" && !serverConfig.insecureNoAuth) {
           yield* Effect.logInfo(
             "Authentication required. Open T3 Code using the pairing URL.",
           ).pipe(Effect.annotateLogs({ pairingUrl: startupBrowserTarget }));
+        } else if (serverConfig.insecureNoAuth) {
+          yield* Effect.logWarning(
+            "Authentication is disabled. Server is running in unsafe no-auth mode.",
+          );
         }
         yield* runStartupPhase("browser.open", maybeOpenBrowser(startupBrowserTarget));
       }

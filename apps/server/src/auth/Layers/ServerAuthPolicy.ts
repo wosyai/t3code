@@ -9,6 +9,21 @@ import { isLoopbackHost, isWildcardHost } from "../../startupAccess.ts";
 
 export const makeServerAuthPolicy = Effect.gen(function* () {
   const config = yield* ServerConfig;
+  if (config.insecureNoAuth) {
+    const descriptor: ServerAuthDescriptor = {
+      policy: "unsafe-no-auth",
+      bootstrapMethods: [],
+      sessionMethods: [],
+      sessionCookieName: resolveSessionCookieName({
+        mode: config.mode,
+        port: config.port,
+      }),
+    };
+
+    return {
+      getDescriptor: () => Effect.succeed(descriptor),
+    } satisfies ServerAuthPolicyShape;
+  }
   const isRemoteReachable = isWildcardHost(config.host) || !isLoopbackHost(config.host);
 
   const policy =
